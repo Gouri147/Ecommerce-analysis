@@ -148,7 +148,7 @@ This project was completed as part of a structured data analytics learning progr
 
 ##  Connect
 
-- LinkedIn: https://www.linkedin.com/in/gouri-sharma-702117293/?lipi=urn%3Ali%3Apage%3Ad_flagship3_profile_view_base_contact_details%3B2QessxKYTGm0JpTmMcZ8%2Fw%3D%3D 
+- LinkedIn: https://www.linkedin.com/in/gouri-sharma-702117293
 - Email: 34shgouri@gmail.com 
 
 ---
