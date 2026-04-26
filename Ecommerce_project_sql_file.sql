@@ -69,13 +69,14 @@ ORDER BY total_sales DESC;
 -- insight- top categoryies as per sales are HEALTH BEAUTY, Wtches present and bed table bath, whereas HEALTH BEAUTY contributing majorly in sales with 1258681.34 and then following with Watches present with 1205005 nearly equal with HEALTH BEAUTY.
 
                                   -- percentage order placed in installments
+
+
 SELECT 
 ROUND(
-    SUM(CASE WHEN payment_installments > 1 THEN 1 ELSE 0 END) * 100.0 
-    / COUNT(*),2
+    COUNT(DISTINCT CASE WHEN payment_installments > 1 THEN order_id END) * 100.0 
+    / COUNT(DISTINCT order_id), 2
 ) AS installment_percentage
 FROM payments;
-
 SELECT payment_installments,
        COUNT(*) AS total_orders
 FROM payments
@@ -117,7 +118,36 @@ FROM (
     GROUP BY o.customer_id, oi.order_id
 ) sub
 JOIN customers c ON sub.customer_id = c.customer_id
-GROUP BY c.customer_city;                                              
+GROUP BY c.customer_city;                
+
+SELECT 
+    c.customer_city,
+    ROUND(AVG(order_product_count), 2) AS avg_products_per_order
+FROM (
+    SELECT 
+        oi.order_id,
+        COUNT(*) AS order_product_count
+    FROM order_items oi
+    GROUP BY oi.order_id
+) t
+JOIN orders o ON t.order_id = o.order_id
+JOIN customers c ON o.customer_id = c.customer_id
+GROUP BY c.customer_city; 
+
+SELECT 
+    c.customer_city,
+    ROUND(AVG(t.product_count), 2) AS avg_products_per_order
+FROM (
+    SELECT 
+        oi.order_id,
+        COUNT(*) AS product_count
+    FROM order_items oi
+    GROUP BY oi.order_id
+) t
+JOIN orders o ON t.order_id = o.order_id
+JOIN customers c ON o.customer_id = c.customer_id
+GROUP BY c.customer_city
+ORDER BY avg_products_per_order DESC;                             
 -- insight - Franca with 1.2516 followed by sao bernardo do campo with 1.1422 
 
                                            -- Revenue contribution by category
@@ -137,6 +167,26 @@ JOIN products p
     ON oi.product_id = p.product_id
 GROUP BY p.product_category_name
 ORDER BY category_revenue DESC;
+
+
+SELECT 
+(
+    COUNT(*) * SUM(avg_price * purchase_count) 
+    - SUM(avg_price) * SUM(purchase_count)
+)
+/
+SQRT(
+    (COUNT(*) * SUM(avg_price * avg_price) - POWER(SUM(avg_price), 2)) *
+    (COUNT(*) * SUM(purchase_count * purchase_count) - POWER(SUM(purchase_count), 2))
+) AS correlation
+FROM (
+    SELECT 
+        product_id,
+        COUNT(*) AS purchase_count,
+        AVG(price) AS avg_price
+    FROM order_items
+    GROUP BY product_id
+) t;
 											-- seller revenue ranking
 SELECT 
     oi.seller_id,
@@ -144,6 +194,25 @@ SELECT
     RANK() OVER (ORDER BY SUM(oi.price) DESC) AS rnk
 FROM order_items oi
 GROUP BY oi.seller_id;     
+
+ -- comulative monthly sales--
+SELECT 
+    YEAR(o.order_purchase_timestamp) AS year,
+    MONTH(o.order_purchase_timestamp) AS month,
+    MONTHNAME(o.order_purchase_timestamp) AS month_name,
+    
+    SUM(oi.price) AS monthly_sales,
+    
+    SUM(SUM(oi.price)) OVER (
+        PARTITION BY YEAR(o.order_purchase_timestamp)
+        ORDER BY MONTH(o.order_purchase_timestamp)
+    ) AS cumulative_sales
+
+FROM orders o
+JOIN order_items oi ON o.order_id = oi.order_id
+
+GROUP BY year, month, month_name
+ORDER BY year, month;
 
                                                -- Top 3 customers per year
 SELECT *
@@ -163,30 +232,31 @@ FROM (
 WHERE rnk <= 3;         
 
 
-                                              -- comulative monthly sales 
-SELECT 
-    YEAR(o.order_purchase_timestamp) AS year,
-    MONTH(o.order_purchase_timestamp) AS month,
-    SUM(oi.price) AS monthly_sales,
-    SUM(SUM(oi.price)) OVER (
-        PARTITION BY YEAR(o.order_purchase_timestamp)
-        ORDER BY MONTH(o.order_purchase_timestamp)
-    ) AS cumulative_sales
-FROM orders o
-JOIN order_items oi ON o.order_id = oi.order_id
-GROUP BY year, month
-ORDER BY year, month;          
+                                              
+        
 
-                                  -- Yearly sales
-SELECT 
-    YEAR(o.order_purchase_timestamp) AS year,
-    SUM(oi.price) AS total_sales
-FROM orders o
-JOIN order_items oi ON o.order_id = oi.order_id
-GROUP BY year
-ORDER BY year;      
--- insight - 2018 has highest amount of sales as 7386050.8024 and followed by 2017 with 6155806.9795 and 2016v with least 49785.9197                            
+                                  -- Yearly sales                  
                                     
+SELECT 
+    year,
+    total_sales,
+    
+    LAG(total_sales) OVER (ORDER BY year) AS previous_year_sales,
+    
+    ROUND(
+        (total_sales - LAG(total_sales) OVER (ORDER BY year)) 
+        / LAG(total_sales) OVER (ORDER BY year) * 100,
+    2) AS yoy_growth_percentage
+
+FROM (
+    SELECT 
+        YEAR(o.order_purchase_timestamp) AS year,
+        SUM(oi.price) AS total_sales
+    FROM orders o
+    JOIN order_items oi ON o.order_id = oi.order_id
+    GROUP BY year
+) t
+ORDER BY year;                                    
                                     -- First Purchase Per Customer
 SELECT 
     customer_id,
@@ -210,26 +280,56 @@ ON o.customer_id = f.customer_id;
 
 						              -- Moving Average of Order Value--
                                    
-SELECT 
-    customer_id,
-    order_purchase_timestamp,
-    order_value,
-    AVG(order_value) OVER (
-        PARTITION BY customer_id 
-        ORDER BY order_purchase_timestamp 
-        ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
-    ) AS moving_avg
-FROM (
+WITH order_value AS (
     SELECT 
         o.customer_id,
+        o.order_id,
         o.order_purchase_timestamp,
         SUM(oi.price) AS order_value
     FROM orders o
-    JOIN order_items oi 
-    ON o.order_id = oi.order_id
-    GROUP BY o.customer_id, o.order_purchase_timestamp
-) t;       
+    JOIN order_items oi ON o.order_id = oi.order_id
+    GROUP BY o.customer_id, o.order_id, o.order_purchase_timestamp
+)
 
+SELECT 
+    customer_id,
+    order_id,
+    order_purchase_timestamp,
+    order_value,
+    
+    AVG(order_value) OVER (
+        PARTITION BY customer_id
+        ORDER BY order_purchase_timestamp
+        ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+    ) AS moving_avg
+
+FROM order_value
+ORDER BY customer_id, order_purchase_timestamp;
+ WITH order_value AS (
+    SELECT 
+        c.customer_unique_id,
+        o.order_id,
+        o.order_purchase_timestamp,
+        SUM(oi.price) AS order_value
+    FROM orders o
+    JOIN order_items oi ON o.order_id = oi.order_id
+    JOIN customers c ON o.customer_id = c.customer_id
+    GROUP BY c.customer_unique_id, o.order_id, o.order_purchase_timestamp
+)
+SELECT 
+    customer_unique_id,
+    order_id,
+    order_purchase_timestamp,
+    order_value,
+    
+    AVG(order_value) OVER (
+        PARTITION BY customer_unique_id
+        ORDER BY order_purchase_timestamp
+        ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+    ) AS moving_avg
+
+FROM order_value
+ORDER BY customer_unique_id, order_purchase_timestamp;
 
                                            -- Commulative sales per month--
 SELECT 
